@@ -1,5 +1,9 @@
 const AUTH_STORAGE_KEY = 'loreal_auth';
-const BASE_URL = '/api/hf/h5app/wxapp';
+const BASE_URL =
+  import.meta.env.VITE_API_BASE ||
+  (import.meta.env.DEV
+    ? '/api/hf/h5app/wxapp'
+    : 'https://www.loreal-boutique.com/api/hf/h5app/wxapp');
 
 export const getStoredAuth = () => {
   if (typeof window === 'undefined') {
