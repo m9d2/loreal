@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  NavLink,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from 'react-router-dom';
+import {
   clearAuth,
   createDirectOrder,
   fetchBrandTags,
@@ -21,9 +29,18 @@ import {
   IconOrder,
   IconSearch,
 } from './components/Icons.jsx';
-import { GiftBody, GiftHeader } from './sections/GiftSection.jsx';
-import CategorySection from './sections/CategorySection.jsx';
-import { formatPrice } from './utils/format.js';
+import GiftPage from './pages/GiftPage.jsx';
+import CategoryPage from './pages/CategoryPage.jsx';
+import OrdersPage from './pages/OrdersPage.jsx';
+import HomePage from './pages/HomePage.jsx';
+import SearchPage from './pages/SearchPage.jsx';
+import CartPage from './pages/CartPage.jsx';
+import LoginModal from './components/modals/LoginModal.jsx';
+import CartModal from './components/modals/CartModal.jsx';
+import CartPickerModal from './components/modals/CartPickerModal.jsx';
+import OrderDetailModal from './components/modals/OrderDetailModal.jsx';
+import ProductDetailModal from './components/modals/ProductDetailModal.jsx';
+import CheckoutModal from './components/modals/CheckoutModal.jsx';
 
 const PAGE_SIZE = 10;
 const CATEGORY_PAGE_SIZE = 10;
@@ -76,9 +93,66 @@ const CATEGORY_GROUPS = [
   },
 ];
 
+let cartSeed = 0;
+const CARTS_STORAGE_KEY = 'loreal-carts';
+const ACTIVE_CART_STORAGE_KEY = 'loreal-active-cart-id';
+
+const createCartId = () => `cart-${Date.now()}-${++cartSeed}`;
+
+const createDefaultCart = () => ({
+  id: createCartId(),
+  name: '购物车',
+  items: [],
+});
+
+const normalizeStoredCart = (cart) => {
+  if (!cart || typeof cart !== 'object') return null;
+  const id = typeof cart.id === 'string' && cart.id ? cart.id : createCartId();
+  const name = typeof cart.name === 'string' && cart.name.trim() ? cart.name : '购物车';
+  const items = Array.isArray(cart.items)
+    ? cart.items.filter((item) => item && typeof item === 'object' && item.item_id)
+    : [];
+  return { id, name, items };
+};
+
+const getStoredCarts = (fallbackCartId) => {
+  if (typeof window === 'undefined') {
+    return [{ id: fallbackCartId, name: '购物车', items: [] }];
+  }
+  try {
+    const raw = window.localStorage.getItem(CARTS_STORAGE_KEY);
+    const parsed = JSON.parse(raw || '[]');
+    const carts = Array.isArray(parsed)
+      ? parsed.map(normalizeStoredCart).filter(Boolean)
+      : [];
+    return carts.length
+      ? carts
+      : [{ id: fallbackCartId, name: '购物车', items: [] }];
+  } catch {
+    return [{ id: fallbackCartId, name: '购物车', items: [] }];
+  }
+};
+
+const getStoredActiveCartId = (carts, fallbackCartId) => {
+  if (typeof window === 'undefined') return fallbackCartId;
+  try {
+    const storedId = window.localStorage.getItem(ACTIVE_CART_STORAGE_KEY);
+    return carts.some((cart) => cart.id === storedId) ? storedId : carts[0]?.id || fallbackCartId;
+  } catch {
+    return carts[0]?.id || fallbackCartId;
+  }
+};
 
 export default function App() {
-  const [activeSection, setActiveSection] = useState('gift');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const pathname = location.pathname;
+  const isHomeRoute = pathname === '/';
+  const isGiftRoute = pathname === '/gift';
+  const isCategoryRoute = pathname === '/category';
+  const isOrdersRoute = pathname === '/orders';
+  const isSearchRoute = pathname === '/search';
+  const isCartRoute = pathname === '/cart';
   const [tags, setTags] = useState([]);
   const [selectedTag, setSelectedTag] = useState('全部');
   const [search, setSearch] = useState('');
@@ -92,7 +166,7 @@ export default function App() {
   const [loadingTags, setLoadingTags] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [error, setError] = useState('');
-  const searchPrevSectionRef = useRef('gift');
+  const searchPrevPathRef = useRef('/gift');
   const [searchTags, setSearchTags] = useState([]);
   const [selectedSearchTag, setSelectedSearchTag] = useState('全部');
   const [searchProducts, setSearchProducts] = useState([]);
@@ -115,7 +189,17 @@ export default function App() {
   const [quantity, setQuantity] = useState(1);
   const [selectedSpecId, setSelectedSpecId] = useState(null);
 
-  const [cartItems, setCartItems] = useState([]);
+  const defaultCartIdRef = useRef(null);
+  if (!defaultCartIdRef.current) {
+    defaultCartIdRef.current = createCartId();
+  }
+  const [carts, setCarts] = useState(() => getStoredCarts(defaultCartIdRef.current));
+  const [activeCartId, setActiveCartId] = useState(() =>
+    getStoredActiveCartId(getStoredCarts(defaultCartIdRef.current), defaultCartIdRef.current)
+  );
+  const [editingCartId, setEditingCartId] = useState(null);
+  const [cartNameDraft, setCartNameDraft] = useState('');
+  const [pendingCartItem, setPendingCartItem] = useState(null);
   const [cartAnimating, setCartAnimating] = useState(false);
   const cartAnimTimerRef = useRef(null);
   const [cartOpen, setCartOpen] = useState(false);
@@ -152,7 +236,11 @@ export default function App() {
   const [categoryError, setCategoryError] = useState('');
 
   const isAuthed = Boolean(auth.token && auth.appid);
-  const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const cartCount = carts.reduce(
+    (sum, cart) =>
+      sum + cart.items.reduce((cartSum, item) => cartSum + item.quantity, 0),
+    0
+  );
   const goodsSortValue =
     sortState.key === 'default' ? 3 : sortState.direction === 'asc' ? 2 : 1;
 
@@ -323,12 +411,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeSection !== 'gift') return;
+    if (!isGiftRoute && !isHomeRoute) return;
     loadProducts(1);
-  }, [selectedTag, sortState, activeSection]);
+  }, [selectedTag, sortState, isGiftRoute, isHomeRoute]);
 
   useEffect(() => {
-    if (activeSection !== 'category') return;
+    if (!isCategoryRoute) return;
     const nextGroup =
       CATEGORY_GROUPS.find((group) => group.id === categoryGroupId) ||
       CATEGORY_GROUPS[0];
@@ -338,39 +426,39 @@ export default function App() {
     setSelectedCategoryTag('全部');
     setCategoryProducts([]);
     setCategoryPage(1);
-  }, [activeSection, categoryGroupId]);
+  }, [isCategoryRoute, categoryGroupId]);
 
   useEffect(() => {
-    if (activeSection !== 'category' || !categoryBrand) return;
+    if (!isCategoryRoute || !categoryBrand) return;
     loadCategoryTags(categoryBrand.id);
-  }, [activeSection, categoryBrand]);
+  }, [isCategoryRoute, categoryBrand]);
 
   useEffect(() => {
-    if (activeSection !== 'category' || !categoryBrand) return;
+    if (!isCategoryRoute || !categoryBrand) return;
     const timer = setTimeout(() => {
       loadCategoryProducts(1);
     }, 300);
     return () => clearTimeout(timer);
-  }, [activeSection, categoryBrand, selectedCategoryTag, search, sortState]);
+  }, [isCategoryRoute, categoryBrand, selectedCategoryTag, search, sortState]);
 
   useEffect(() => {
-    if (activeSection !== 'search') return;
+    if (!isSearchRoute) return;
     loadSearchTags();
-  }, [activeSection, search]);
+  }, [isSearchRoute, search]);
 
   useEffect(() => {
-    if (activeSection !== 'search') return;
+    if (!isSearchRoute) return;
     const timer = setTimeout(() => {
       loadSearchProducts(1);
     }, 300);
     return () => clearTimeout(timer);
-  }, [activeSection, search, selectedSearchTag, sortState]);
+  }, [isSearchRoute, search, selectedSearchTag, sortState]);
 
   useEffect(() => {
-    if (activeSection !== 'orders') return;
+    if (!isOrdersRoute) return;
     if (orderList.length) return;
     loadOrders(1, orderStatus);
-  }, [activeSection]);
+  }, [isOrdersRoute]);
 
   const visibleProducts = useMemo(() => {
     let filtered = products;
@@ -419,8 +507,8 @@ export default function App() {
   const startSearch = () => {
     const keyword = search.trim();
     if (!keyword) return;
-    if (activeSection !== 'search') {
-      searchPrevSectionRef.current = activeSection;
+    if (!isSearchRoute) {
+      searchPrevPathRef.current = pathname;
     }
     setSelectedSearchTag('全部');
     setSearchTags([]);
@@ -428,12 +516,12 @@ export default function App() {
     setSearchPage(1);
     setSearchTotalCount(0);
     setSearchError('');
-    setActiveSection('search');
+    navigate('/search');
   };
 
   const clearSearchInput = () => {
     setSearch('');
-    if (activeSection === 'search') {
+    if (isSearchRoute) {
       setSearchTags([]);
       setSelectedSearchTag('全部');
       setSearchProducts([]);
@@ -451,7 +539,7 @@ export default function App() {
     setSearchPage(1);
     setSearchTotalCount(0);
     setSearchError('');
-    setActiveSection(searchPrevSectionRef.current || 'gift');
+    navigate(searchPrevPathRef.current || '/gift');
   };
 
   const handleLoginSubmit = (event) => {
@@ -485,50 +573,130 @@ export default function App() {
     tags: item.tags || '',
   });
 
-  const addToCart = (item, qty = 1) => {
-    if (!item?.item_id) return;
+  const triggerCartAnimation = () => {
     if (cartAnimTimerRef.current) {
       clearTimeout(cartAnimTimerRef.current);
     }
     setCartAnimating(false);
-    setCartItems((prev) => {
-      const existing = prev.find((entry) => entry.item_id === item.item_id);
-      if (existing) {
-        return prev.map((entry) =>
-          entry.item_id === item.item_id
-            ? { ...entry, quantity: entry.quantity + qty }
-            : entry
-        );
-      }
-      return [...prev, buildCartItem(item, qty)];
-    });
     requestAnimationFrame(() => setCartAnimating(true));
     cartAnimTimerRef.current = setTimeout(() => {
       setCartAnimating(false);
     }, 450);
   };
 
-  const updateCartQty = (itemId, nextQty) => {
-    setCartItems((prev) =>
-      nextQty <= 0
-        ? prev.filter((entry) => entry.item_id !== itemId)
-        : prev.map((entry) =>
-            entry.item_id === itemId ? { ...entry, quantity: nextQty } : entry
-          )
+  const addItemToCart = (cartId, item, qty = 1) => {
+    if (!cartId || !item?.item_id) return;
+    setActiveCartId(cartId);
+    setCarts((prev) =>
+      prev.map((cart) => {
+        if (cart.id !== cartId) return cart;
+        const existing = cart.items.find((entry) => entry.item_id === item.item_id);
+        const items = existing
+          ? cart.items.map((entry) =>
+              entry.item_id === item.item_id
+                ? { ...entry, quantity: entry.quantity + qty }
+                : entry
+            )
+          : [...cart.items, buildCartItem(item, qty)];
+        return { ...cart, items };
+      })
+    );
+    triggerCartAnimation();
+  };
+
+  const addToCart = (item, qty = 1) => {
+    if (!item?.item_id) return;
+    if (carts.length > 1) {
+      setPendingCartItem({ item, qty });
+      return;
+    }
+    addItemToCart(activeCartId, item, qty);
+  };
+
+  const updateCartQty = (cartId, itemId, nextQty) => {
+    setActiveCartId(cartId);
+    setCarts((prev) =>
+      prev.map((cart) => {
+        if (cart.id !== cartId) return cart;
+        const items =
+          nextQty <= 0
+            ? cart.items.filter((entry) => entry.item_id !== itemId)
+            : cart.items.map((entry) =>
+                entry.item_id === itemId ? { ...entry, quantity: nextQty } : entry
+              );
+        return { ...cart, items };
+      })
     );
   };
 
-  const removeCartItem = (itemId) => {
-    setCartItems((prev) => prev.filter((entry) => entry.item_id !== itemId));
+  const removeCartItem = (cartId, itemId) => {
+    setActiveCartId(cartId);
+    setCarts((prev) =>
+      prev.map((cart) =>
+        cart.id === cartId
+          ? {
+              ...cart,
+              items: cart.items.filter((entry) => entry.item_id !== itemId),
+            }
+          : cart
+      )
+    );
   };
 
-  const handleCheckout = async (itemsOverride) => {
-    const itemsToCheckout = itemsOverride || cartItems;
+  const createCart = () => {
+    const nextCart = createDefaultCart();
+    setCarts((prev) => [...prev, nextCart]);
+    setActiveCartId(nextCart.id);
+    setEditingCartId(nextCart.id);
+    setCartNameDraft(nextCart.name);
+  };
+
+  const deleteCart = (cartId) => {
+    if (!cartId) return;
+    setCarts((prev) => {
+      const next = prev.filter((cart) => cart.id !== cartId);
+      return next.length ? next : [createDefaultCart()];
+    });
+    if (editingCartId === cartId) {
+      setEditingCartId(null);
+      setCartNameDraft('');
+    }
+  };
+
+  const startCartRename = (cart) => {
+    setActiveCartId(cart.id);
+    setEditingCartId(cart.id);
+    setCartNameDraft(cart.name || '购物车');
+  };
+
+  const finishCartRename = (cartId) => {
+    const nextName = cartNameDraft.trim() || '购物车';
+    setCarts((prev) =>
+      prev.map((cart) => (cart.id === cartId ? { ...cart, name: nextName } : cart))
+    );
+    setEditingCartId(null);
+    setCartNameDraft('');
+  };
+
+  const cancelCartRename = () => {
+    setEditingCartId(null);
+    setCartNameDraft('');
+  };
+
+  const handlePendingCartPick = (cartId) => {
+    if (!pendingCartItem) return;
+    addItemToCart(cartId, pendingCartItem.item, pendingCartItem.qty);
+    setPendingCartItem(null);
+  };
+
+  const handleCheckout = async (itemsOverride, options = {}) => {
+    const itemsToCheckout =
+      itemsOverride || carts.flatMap((cart) => cart.items);
     const normalizedItems = itemsToCheckout.filter(
       (item) => item?.item_id && Number(item.quantity) > 0
     );
     if (!normalizedItems.length) {
-      setCheckoutError('请选择要结算的商品');
+      setCheckoutError('请选择要提交的商品');
       setCheckoutOpen(true);
       return;
     }
@@ -546,8 +714,16 @@ export default function App() {
       const data = await createDirectOrder(normalizedItems);
       setCheckoutData(data);
       setCheckoutOpen(true);
-      if (!itemsOverride) {
-        setCartItems([]);
+      if (options.cartIdsToClear?.length) {
+        setCarts((prev) =>
+          prev.map((cart) =>
+            options.cartIdsToClear.includes(cart.id) ? { ...cart, items: [] } : cart
+          )
+        );
+      } else if (!itemsOverride) {
+        setCarts((prev) => prev.map((cart) => ({ ...cart, items: [] })));
+      }
+      if (options.closeCartOnSuccess) {
         setCartOpen(false);
       }
     } catch (err) {
@@ -558,8 +734,88 @@ export default function App() {
       if (payload?.code === 400 && invalidItems.length) {
         setCheckoutInvalidItems(invalidItems);
       }
-      setCheckoutError(err.message || '结算失败');
+      setCheckoutError(err.message || '提交失败');
       setCheckoutOpen(true);
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
+  const handleCheckoutAll = async (options = {}) => {
+    const cartsToCheckout = carts
+      .map((cart) => ({
+        ...cart,
+        items: cart.items.filter((item) => item?.item_id && Number(item.quantity) > 0),
+      }))
+      .filter((cart) => cart.items.length);
+    const allItems = cartsToCheckout.flatMap((cart) => cart.items);
+
+    if (!allItems.length) {
+      setCheckoutError('请选择要提交的商品');
+      setCheckoutOpen(true);
+      return;
+    }
+    if (!hasAuth()) {
+      setCheckoutError('请先点击右上角登录配置 token 与 appid');
+      setCheckoutOpen(true);
+      return;
+    }
+
+    setCheckoutLoading(true);
+    setCheckoutError('');
+    setCheckoutData(null);
+    setCheckoutInvalidItems([]);
+    setCheckoutItemsSnapshot(allItems);
+
+    const successOrders = [];
+    const successCartIds = [];
+    const invalidItems = [];
+    const errorMessages = [];
+
+    try {
+      for (const cart of cartsToCheckout) {
+        try {
+          const data = await createDirectOrder(cart.items);
+          successOrders.push({
+            ...data,
+            cartId: cart.id,
+            cartName: cart.name || '购物车',
+          });
+          successCartIds.push(cart.id);
+        } catch (err) {
+          const payload = err?.payload;
+          const cartInvalidItems = Array.isArray(payload?.data?.item_status)
+            ? payload.data.item_status.map((item) => ({
+                ...item,
+                cartId: cart.id,
+                cartName: cart.name || '购物车',
+              }))
+            : [];
+          if (cartInvalidItems.length) {
+            invalidItems.push(...cartInvalidItems);
+          }
+          errorMessages.push(`${cart.name || '购物车'}：${err.message || '提交失败'}`);
+        }
+      }
+
+      if (successOrders.length) {
+        setCheckoutData(successOrders.length === 1 ? successOrders[0] : successOrders);
+        setCarts((prev) =>
+          prev.map((cart) =>
+            successCartIds.includes(cart.id) ? { ...cart, items: [] } : cart
+          )
+        );
+      }
+      if (invalidItems.length) {
+        setCheckoutInvalidItems(invalidItems);
+      }
+      if (errorMessages.length) {
+        setCheckoutError(errorMessages.join('；'));
+      }
+      setCheckoutOpen(true);
+      if (options.closeCartOnSuccess && successOrders.length) {
+        setCartOpen(false);
+      }
     } finally {
       setCheckoutLoading(false);
     }
@@ -635,7 +891,7 @@ export default function App() {
   };
 
   const openOrders = () => {
-    setActiveSection('orders');
+    navigate('/orders');
     loadOrders(1, orderStatus);
   };
 
@@ -850,8 +1106,22 @@ export default function App() {
     pics: activeImages,
   };
 
-  const cartTotal = cartItems.reduce(
-    (sum, item) => sum + (item.price || 0) * item.quantity,
+  const allCartTotal = carts.reduce(
+    (sum, cart) =>
+      sum +
+      cart.items.reduce(
+        (cartSum, item) => cartSum + (item.price || 0) * item.quantity,
+        0
+      ),
+    0
+  );
+  const nonEmptyCartIds = carts.filter((cart) => cart.items.length).map((cart) => cart.id);
+  const checkoutSnapshotCount = checkoutItemsSnapshot.reduce(
+    (sum, item) => sum + Number(item.quantity || 0),
+    0
+  );
+  const checkoutSnapshotTotal = checkoutItemsSnapshot.reduce(
+    (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0),
     0
   );
 
@@ -1008,8 +1278,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const nextActiveCartId = carts.some((cart) => cart.id === activeCartId)
+      ? activeCartId
+      : carts[0]?.id || defaultCartIdRef.current;
+    if (nextActiveCartId !== activeCartId) {
+      setActiveCartId(nextActiveCartId);
+      return;
+    }
+    window.localStorage.setItem(CARTS_STORAGE_KEY, JSON.stringify(carts));
+    window.localStorage.setItem(ACTIVE_CART_STORAGE_KEY, nextActiveCartId);
+  }, [carts, activeCartId]);
+
+  useEffect(() => {
     if (orderDetailOpen) return;
-    if (activeSection !== 'orders') return;
+    if (!isOrdersRoute) return;
     if (orderLoading) return;
     if (!shouldRestoreOrderScroll.current) return;
     const listEl = orderListScrollRef.current;
@@ -1019,886 +1301,453 @@ export default function App() {
       shouldRestoreOrderScroll.current = false;
     });
     return () => cancelAnimationFrame(handle);
-  }, [orderDetailOpen, activeSection, orderLoading, orderList.length]);
+  }, [orderDetailOpen, isOrdersRoute, orderLoading, orderList.length]);
+
+  useEffect(() => {
+    if (!isSearchRoute) {
+      searchPrevPathRef.current = pathname;
+    }
+  }, [pathname, isSearchRoute]);
+
+  const currentTitle = isCategoryRoute
+    ? '商品分类'
+    : isSearchRoute
+      ? '搜索列表'
+      : isOrdersRoute
+        ? '订单列表'
+        : isCartRoute
+          ? '购物车'
+        : isHomeRoute
+          ? '首页'
+          : '礼包';
+
+  const handleToggleView = () => {
+    setViewMode((prev) => (prev === 'grid' ? 'list' : 'grid'));
+  };
 
   return (
-    <div className="page">
-      <div className="page__top">
-        <div className="container">
-          <header className="topbar">
-            <div className="brand">
-              {activeSection === 'search' && (
-                <button className="topbar__back" type="button" onClick={exitSearch}>
+    <div className="min-h-screen bg-stone-100 text-stone-900">
+      <div className="border-b border-stone-200 bg-white/90 backdrop-blur">
+        <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
+          <header className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex items-center gap-4">
+              {isSearchRoute && (
+                <button
+                  className="rounded-full border border-stone-200 px-4 py-2 text-sm text-stone-600"
+                  type="button"
+                  onClick={exitSearch}
+                >
                   ←
                 </button>
               )}
-              <h1>
-                {activeSection === 'category'
-                  ? '商品分类'
-                  : activeSection === 'search'
-                    ? '搜索列表'
-                    : activeSection === 'orders'
-                      ? '订单列表'
-                      : '礼包'}
-              </h1>
+              <div>
+                <div className="text-xs uppercase tracking-[0.24em] text-stone-400">
+                  L'Oreal
+                </div>
+                <h1 className="text-2xl font-semibold tracking-tight">{currentTitle}</h1>
+              </div>
             </div>
-            <div className="topbar__search">
-              <IconSearch />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="搜索商品"
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    startSearch();
-                  }
-                }}
-              />
-              {search && (
-                <button className="topbar__clear" type="button" onClick={clearSearchInput}>
-                  ✕
-                </button>
-              )}
-            </div>
-            <div className="topbar__actions">
-              <nav className="nav">
-                <button className="nav__item" type="button">
-                  <IconHome />
-                  首页
-                </button>
+
+            <div className="flex flex-1 flex-col gap-4 xl:items-end">
+              <div className="flex w-full flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
+                <div className="flex w-full max-w-xl items-center gap-3 rounded-full border border-stone-200 bg-stone-50 px-4 py-3">
+                  <IconSearch className="h-5 w-5 text-stone-400" />
+                  <input
+                    className="flex-1 bg-transparent text-sm outline-none placeholder:text-stone-400"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="搜索商品"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        startSearch();
+                      }
+                    }}
+                  />
+                  {search && (
+                    <button
+                      className="rounded-full px-2 py-1 text-sm text-stone-500"
+                      type="button"
+                      onClick={clearSearchInput}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <nav className="flex flex-wrap items-center gap-2">
+                  <NavLink
+                    to="/"
+                    className={({ isActive }) =>
+                      `inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition ${
+                        isActive
+                          ? 'bg-stone-900 text-white'
+                          : 'border border-stone-200 bg-white text-stone-700 hover:border-stone-400'
+                      }`
+                    }
+                  >
+                    <IconHome className="h-4 w-4" />
+                    首页
+                  </NavLink>
+                  <NavLink
+                    to="/gift"
+                    className={({ isActive }) =>
+                      `inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition ${
+                        isActive
+                          ? 'bg-stone-900 text-white'
+                          : 'border border-stone-200 bg-white text-stone-700 hover:border-stone-400'
+                      }`
+                    }
+                  >
+                    <IconBag className="h-4 w-4" />
+                    礼包
+                  </NavLink>
+                  <NavLink
+                    to="/category"
+                    className={({ isActive }) =>
+                      `inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition ${
+                        isActive
+                          ? 'bg-stone-900 text-white'
+                          : 'border border-stone-200 bg-white text-stone-700 hover:border-stone-400'
+                      }`
+                    }
+                  >
+                    <IconCategory className="h-4 w-4" />
+                    分类
+                  </NavLink>
+                  <button
+                    className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition ${
+                      isOrdersRoute
+                        ? 'bg-stone-900 text-white'
+                        : 'border border-stone-200 bg-white text-stone-700 hover:border-stone-400'
+                    }`}
+                    type="button"
+                    onClick={openOrders}
+                  >
+                    <IconOrder className="h-4 w-4" />
+                    订单
+                  </button>
+                  <NavLink
+                    to="/cart"
+                    className={({ isActive }) =>
+                      `inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition ${
+                        isActive
+                          ? 'bg-stone-900 text-white'
+                          : 'border border-stone-200 bg-white text-stone-700 hover:border-stone-400'
+                      }`
+                    }
+                  >
+                    <IconCart className="h-4 w-4" />
+                    购物车
+                  </NavLink>
+                </nav>
+
                 <button
-                  className={`nav__item ${
-                    activeSection === 'gift' ? 'nav__item--active' : ''
-                  }`}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-stone-900 px-4 py-2 text-sm text-white"
+                  onClick={openLogin}
                   type="button"
-                  onClick={() => setActiveSection('gift')}
                 >
-                  <IconBag />
-                  礼包
+                  <IconLogin className="h-4 w-4" />
+                  登录
+                  <span
+                    className={`h-2.5 w-2.5 rounded-full ${
+                      isAuthed ? 'bg-emerald-400' : 'bg-stone-500'
+                    }`}
+                  />
                 </button>
-                <button
-                  className={`nav__item ${
-                    activeSection === 'category' ? 'nav__item--active' : ''
-                  }`}
-                  type="button"
-                  onClick={() => setActiveSection('category')}
-                >
-                  <IconCategory />
-                  分类
-                </button>
-                <button
-                  className={`nav__item ${
-                    activeSection === 'orders' ? 'nav__item--active' : ''
-                  }`}
-                  type="button"
-                  onClick={openOrders}
-                >
-                  <IconOrder />
-                  订单
-                </button>
-                <button
-                  className={`nav__item nav__item--cart ${
-                    cartAnimating ? 'nav__item--bump' : ''
-                  }`}
-                  type="button"
-                  onClick={() => setCartOpen(true)}
-                >
-                  <IconCart />
-                  购物车
-                  {cartCount > 0 && <span className="nav__badge">{cartCount}</span>}
-                </button>
-              </nav>
-              <button className="login" onClick={openLogin} type="button">
-                <IconLogin />
-                登录
-                <span className={`status ${isAuthed ? 'status--on' : ''}`} />
-              </button>
+              </div>
             </div>
           </header>
-
-          {activeSection === 'gift' && (
-            <GiftHeader
-              tags={tags}
-              loadingTags={loadingTags}
-              selectedTag={selectedTag}
-              onSelectTag={setSelectedTag}
-              sortState={sortState}
-              onDefaultSort={handleDefaultSort}
-              onPriceSort={handlePriceSort}
-              totalCount={totalCount}
-              viewMode={viewMode}
-              onToggleView={() =>
-                setViewMode((prev) => (prev === 'grid' ? 'list' : 'grid'))
-              }
-              error={error}
-            />
-          )}
-          {activeSection === 'search' && (
-            <GiftHeader
-              tags={searchTags}
-              loadingTags={searchTagLoading}
-              selectedTag={selectedSearchTag}
-              onSelectTag={setSelectedSearchTag}
-              sortState={sortState}
-              onDefaultSort={handleDefaultSort}
-              onPriceSort={handlePriceSort}
-              totalCount={searchTotalCount}
-              viewMode={viewMode}
-              onToggleView={() =>
-                setViewMode((prev) => (prev === 'grid' ? 'list' : 'grid'))
-              }
-              error={searchError}
-            />
-          )}
         </div>
       </div>
 
-      <div className="page__body">
-        <div className="container">
-          {activeSection === 'gift' ? (
-            <GiftBody
-              loadingList={loadingList}
-              products={visibleProducts}
-              viewMode={viewMode}
-              onSelectProduct={openDetail}
-              onAddToCart={addToCart}
-              page={page}
-              totalPages={totalPages}
-              pageNumbers={pageNumbers}
-              onPageChange={loadProducts}
-            />
-          ) : activeSection === 'category' ? (
-            <CategorySection
-              groups={CATEGORY_GROUPS}
-              activeGroupId={categoryGroupId}
-              onGroupChange={setCategoryGroupId}
-              activeGroup={activeCategoryGroup}
-              categoryBrand={categoryBrand}
-              onBrandSelect={(brand) => {
-                setCategoryBrand(brand);
-                setSelectedCategoryTag('全部');
-                setCategoryTags([]);
-                setCategoryProducts([]);
-                setCategoryPage(1);
-              }}
-              categoryTags={categoryTags}
-              selectedCategoryTag={selectedCategoryTag}
-              onSelectCategoryTag={setSelectedCategoryTag}
-              sortState={sortState}
-              onDefaultSort={handleDefaultSort}
-              onPriceSort={handlePriceSort}
-              categoryTotalCount={categoryTotalCount}
-              viewMode={viewMode}
-              onToggleView={() =>
-                setViewMode((prev) => (prev === 'grid' ? 'list' : 'grid'))
-              }
-              categoryError={categoryError}
-              categoryLoading={categoryLoading}
-              products={visibleCategoryProducts}
-              onSelectProduct={openDetail}
-              onAddToCart={addToCart}
-              categoryPage={categoryPage}
-              categoryTotalPages={categoryTotalPages}
-              categoryPageNumbers={categoryPageNumbers}
-              onPageChange={loadCategoryProducts}
-            />
-          ) : activeSection === 'search' ? (
-            <GiftBody
-              loadingList={searchLoading}
-              products={visibleSearchProducts}
-              viewMode={viewMode}
-              onSelectProduct={openDetail}
-              onAddToCart={addToCart}
-              page={searchPage}
-              totalPages={searchTotalPages}
-              pageNumbers={searchPageNumbers}
-              onPageChange={loadSearchProducts}
-            />
-          ) : (
-            <section className="orders-page">
-              <header className="orders-page__header">
-                <h2>订单列表</h2>
-              </header>
-              <div className="orders__tabs">
-                {ORDER_STATUS.map((status) => (
-                  <button
-                    key={status.value}
-                    type="button"
-                    className={`orders__tab ${
-                      orderStatus === status.value ? 'orders__tab--active' : ''
-                    }`}
-                    onClick={() => loadOrders(1, status.value)}
-                  >
-                    {status.label}
-                  </button>
-                ))}
-              </div>
-              {orderError && <div className="orders__error">{orderError}</div>}
-              <div className="orders__list" ref={orderListScrollRef}>
-                {orderLoading ? (
-                  <div className="orders__loading">加载中...</div>
-                ) : orderList.length ? (
-                  orderList.map((order) => {
-                    const items = Array.isArray(order.items)
-                      ? order.items
-                      : Array.isArray(order.item_list)
-                        ? order.item_list
-                        : Array.isArray(order.goods_items)
-                          ? order.goods_items
-                          : [];
-                    const totalQty =
-                      order.total_items_quantity ??
-                      items.reduce(
-                        (sum, item) => sum + Number(item.num || item.quantity || 0),
-                        0
-                      );
-                    const statusLabel =
-                      order.order_status_msg || orderStatusLabel(order.status);
-                    return (
-                      <div
-                        className="orders__card"
-                        key={order.order_id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => openOrderDetail(order.order_id)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            openOrderDetail(order.order_id);
-                          }
-                        }}
-                      >
-                        <div className="orders__meta">
-                          <span>订单号 {order.order_id}</span>
-                          <span className="orders__status">{statusLabel}</span>
-                        </div>
-                        <div className="orders__time">
-                          {formatDateTime(order.create_time)}
-                        </div>
-                        <div className="orders__items">
-                          {items.slice(0, 2).map((item) => {
-                            const imageUrl = item.item_pics?.[0] || item.image;
-                            const quantity = item.num ?? item.quantity ?? 0;
-                            return (
-                              <div
-                                className="orders__item"
-                                key={`${item.item_id}-${item.id}`}
-                              >
-                                {imageUrl ? (
-                                  <img src={imageUrl} alt="" />
-                                ) : (
-                                  <div className="orders__item-empty" />
-                                )}
-                                <div>
-                                  <p>{item.item_name}</p>
-                                  <div className="orders__item-meta">
-                                    <span className="orders__item-price">
-                                      {formatPrice(item.price)}
-                                    </span>
-                                    <span className="orders__item-qty">
-                                      x {quantity}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        {items.length > 2 && (
-                          <div className="orders__more">
-                            还有 {items.length - 2} 件商品
-                          </div>
-                        )}
-                        <div className="orders__summary">
-                          <span>共 {totalQty} 件</span>
-                          <span>
-                            合计 {formatPrice(order.total_price ?? order.actual_price)}
-                          </span>
-                        </div>
-                      </div>
-                    );
+      <main className="mx-auto max-w-[1440px] px-4 py-8 sm:px-6 lg:px-8">
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <HomePage
+                featuredProducts={visibleProducts.slice(0, 4)}
+                loading={loadingList}
+                onSelectProduct={openDetail}
+                onAddToCart={addToCart}
+                cartCount={cartCount}
+              />
+            }
+          />
+          <Route
+            path="/gift"
+            element={
+              <GiftPage
+                tags={tags}
+                loadingTags={loadingTags}
+                selectedTag={selectedTag}
+                onSelectTag={setSelectedTag}
+                sortState={sortState}
+                onDefaultSort={handleDefaultSort}
+                onPriceSort={handlePriceSort}
+                totalCount={totalCount}
+                viewMode={viewMode}
+                onToggleView={handleToggleView}
+                error={error}
+                loadingList={loadingList}
+                products={visibleProducts}
+                onSelectProduct={openDetail}
+                onAddToCart={addToCart}
+                page={page}
+                totalPages={totalPages}
+                pageNumbers={pageNumbers}
+                onPageChange={loadProducts}
+              />
+            }
+          />
+          <Route
+            path="/category"
+            element={
+              <CategoryPage
+                groups={CATEGORY_GROUPS}
+                activeGroupId={categoryGroupId}
+                onGroupChange={setCategoryGroupId}
+                activeGroup={activeCategoryGroup}
+                categoryBrand={categoryBrand}
+                onBrandSelect={(brand) => {
+                  setCategoryBrand(brand);
+                  setSelectedCategoryTag('全部');
+                  setCategoryTags([]);
+                  setCategoryProducts([]);
+                  setCategoryPage(1);
+                }}
+                tags={categoryTags}
+                loadingTags={categoryTags.length === 0 && categoryLoading}
+                selectedTag={selectedCategoryTag}
+                onSelectTag={setSelectedCategoryTag}
+                sortState={sortState}
+                onDefaultSort={handleDefaultSort}
+                onPriceSort={handlePriceSort}
+                totalCount={categoryTotalCount}
+                viewMode={viewMode}
+                onToggleView={handleToggleView}
+                error={categoryError}
+                loadingList={categoryLoading}
+                products={visibleCategoryProducts}
+                onSelectProduct={openDetail}
+                onAddToCart={addToCart}
+                page={categoryPage}
+                totalPages={categoryTotalPages}
+                pageNumbers={categoryPageNumbers}
+                onPageChange={loadCategoryProducts}
+              />
+            }
+          />
+          <Route
+            path="/orders"
+            element={
+              <OrdersPage
+                orderStatus={orderStatus}
+                orderStatuses={ORDER_STATUS}
+                onChangeStatus={(status) => loadOrders(1, status)}
+                orderError={orderError}
+                orderLoading={orderLoading}
+                orderList={orderList}
+                onOpenOrderDetail={openOrderDetail}
+                formatDateTime={formatDateTime}
+                orderStatusLabel={orderStatusLabel}
+                orderPage={orderPage}
+                orderTotalPages={orderTotalPages}
+                orderPageNumbers={orderPageNumbers}
+                onPageChange={loadOrders}
+                orderListRef={orderListScrollRef}
+              />
+            }
+          />
+          <Route
+            path="/cart"
+            element={
+              <CartPage
+                carts={carts}
+                activeCartId={activeCartId}
+                editingCartId={editingCartId}
+                cartNameDraft={cartNameDraft}
+                cartCount={cartCount}
+                allCartTotal={allCartTotal}
+                checkoutLoading={checkoutLoading}
+                nonEmptyCartIds={nonEmptyCartIds}
+                onCreateCart={createCart}
+                onSetActiveCart={setActiveCartId}
+                onCartNameDraftChange={setCartNameDraft}
+                onFinishCartRename={finishCartRename}
+                onCancelCartRename={cancelCartRename}
+                onStartCartRename={startCartRename}
+                onDeleteCart={deleteCart}
+                onUpdateCartQty={updateCartQty}
+                onRemoveCartItem={removeCartItem}
+                onCheckoutCart={(cart) =>
+                  handleCheckout(cart.items, {
+                    cartIdsToClear: [cart.id],
                   })
-                ) : (
-                  <div className="orders__empty">暂无订单</div>
-                )}
-              </div>
-              {orderTotalPages > 1 && (
-                <div className="orders__pagination">
-                  <button
-                    type="button"
-                    className="page-btn"
-                    disabled={orderPage === 1 || orderLoading}
-                    onClick={() => loadOrders(orderPage - 1)}
-                  >
-                    上一页
-                  </button>
-                  {orderPageNumbers.map((pageNum) => (
-                    <button
-                      key={pageNum}
-                      type="button"
-                      className={`page-btn ${
-                        pageNum === orderPage ? 'page-btn--active' : ''
-                      }`}
-                      disabled={orderLoading}
-                      onClick={() => loadOrders(pageNum)}
-                    >
-                      {pageNum}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    className="page-btn"
-                    disabled={orderPage === orderTotalPages || orderLoading}
-                    onClick={() => loadOrders(orderPage + 1)}
-                  >
-                    下一页
-                  </button>
-                  <span className="page-meta">共 {orderTotalPages} 页</span>
-                </div>
-              )}
-            </section>
-          )}
-        </div>
-      </div>
+                }
+                onCheckoutAll={() =>
+                  handleCheckoutAll()
+                }
+              />
+            }
+          />
+          <Route
+            path="/search"
+            element={
+              <SearchPage
+                tags={searchTags}
+                loadingTags={searchTagLoading}
+                selectedTag={selectedSearchTag}
+                onSelectTag={setSelectedSearchTag}
+                sortState={sortState}
+                onDefaultSort={handleDefaultSort}
+                onPriceSort={handlePriceSort}
+                totalCount={searchTotalCount}
+                viewMode={viewMode}
+                onToggleView={handleToggleView}
+                error={searchError}
+                loadingList={searchLoading}
+                products={visibleSearchProducts}
+                onSelectProduct={openDetail}
+                onAddToCart={addToCart}
+                page={searchPage}
+                totalPages={searchTotalPages}
+                pageNumbers={searchPageNumbers}
+                onPageChange={loadSearchProducts}
+              />
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+
+      <button
+        className={`fixed bottom-6 right-6 z-40 inline-flex items-center gap-3 rounded-full bg-stone-900 px-5 py-3 text-sm font-medium text-white shadow-[0_18px_40px_rgba(28,25,23,0.22)] transition duration-200 hover:bg-stone-800 ${
+          cartAnimating ? 'scale-105' : ''
+        }`}
+        type="button"
+        onClick={() => setCartOpen(true)}
+      >
+        <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/12">
+          <IconCart className="h-5 w-5" />
+        </span>
+        <span>购物车</span>
+        {cartCount > 0 && (
+          <span className="rounded-full bg-amber-700 px-2 py-0.5 text-xs text-white">
+            {cartCount}
+          </span>
+        )}
+      </button>
 
       {showLogin && (
-        <div className="modal" role="dialog" aria-modal="true">
-          <button
-            className="modal__backdrop"
-            onClick={() => setShowLogin(false)}
-            type="button"
-          />
-          <div className="modal__card">
-            <div className="modal__header">
-              <h2>登录配置</h2>
-              <p>填写 token 与 appid，保存到 localStorage 后用于接口请求。</p>
-            </div>
-            <form className="modal__form" onSubmit={handleLoginSubmit}>
-              <label>
-                Token
-                <textarea
-                  value={tokenInput}
-                  onChange={(event) => setTokenInput(event.target.value)}
-                  placeholder="Bearer token"
-                  rows={3}
-                />
-              </label>
-              <label>
-                AppID
-                <input
-                  value={appidInput}
-                  onChange={(event) => setAppidInput(event.target.value)}
-                  placeholder="authorizer-appid"
-                />
-              </label>
-              <div className="modal__actions">
-                <button type="button" className="ghost" onClick={handleClearAuth}>
-                  清空
-                </button>
-                <button type="button" className="ghost" onClick={() => setShowLogin(false)}>
-                  取消
-                </button>
-                <button type="submit" className="primary">
-                  保存
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <LoginModal
+          tokenInput={tokenInput}
+          appidInput={appidInput}
+          onTokenChange={setTokenInput}
+          onAppidChange={setAppidInput}
+          onClear={handleClearAuth}
+          onClose={() => setShowLogin(false)}
+          onSubmit={handleLoginSubmit}
+        />
       )}
 
       {cartOpen && (
-        <div className="cart" role="dialog" aria-modal="true">
-          <button className="cart__backdrop" onClick={() => setCartOpen(false)} type="button" />
-          <div className="cart__panel">
-            <header className="cart__header">
-              <h2>购物车</h2>
-              <button className="cart__close" type="button" onClick={() => setCartOpen(false)}>
-                ✕
-              </button>
-            </header>
-            {cartItems.length === 0 ? (
-              <div className="cart__empty">购物车为空</div>
-            ) : (
-              <div className="cart__list">
-                {cartItems.map((item) => (
-                  <div className="cart__item" key={item.item_id}>
-                    <img src={item.image} alt={item.item_name} />
-                    <div className="cart__info">
-                      <h4>{item.item_name}</h4>
-                      {item.spec && <p className="cart__spec">{item.spec}</p>}
-                      <div className="cart__price">
-                        <span className="price">{formatPrice(item.price)}</span>
-                        <span className="price--old">
-                          {formatPrice(item.market_price)}
-                        </span>
-                      </div>
-                      <div className="cart__qty">
-                        <button
-                          type="button"
-                          onClick={() => updateCartQty(item.item_id, item.quantity - 1)}
-                        >
-                          -
-                        </button>
-                        <span>{item.quantity}</span>
-                        <button
-                          type="button"
-                          onClick={() => updateCartQty(item.item_id, item.quantity + 1)}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-                    <button
-                      className="cart__remove"
-                      type="button"
-                      onClick={() => removeCartItem(item.item_id)}
-                    >
-                      移除
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <footer className="cart__footer">
-              <div className="cart__total">
-                <span>合计</span>
-                <strong>{formatPrice(cartTotal)}</strong>
-              </div>
-              <button
-                className="cart__checkout"
-                type="button"
-                disabled={!cartItems.length || checkoutLoading}
-                onClick={() => handleCheckout()}
-              >
-                {checkoutLoading ? '结算中...' : '去结算'}
-              </button>
-            </footer>
-          </div>
-        </div>
+        <CartModal
+          carts={carts}
+          activeCartId={activeCartId}
+          editingCartId={editingCartId}
+          cartNameDraft={cartNameDraft}
+          cartCount={cartCount}
+          allCartTotal={allCartTotal}
+          checkoutLoading={checkoutLoading}
+          nonEmptyCartIds={nonEmptyCartIds}
+          onClose={() => setCartOpen(false)}
+          onCreateCart={createCart}
+          onSetActiveCart={setActiveCartId}
+          onCartNameDraftChange={setCartNameDraft}
+          onFinishCartRename={finishCartRename}
+          onCancelCartRename={cancelCartRename}
+          onStartCartRename={startCartRename}
+          onDeleteCart={deleteCart}
+          onUpdateCartQty={updateCartQty}
+          onRemoveCartItem={removeCartItem}
+          onCheckoutCart={(cart) =>
+            handleCheckout(cart.items, {
+              cartIdsToClear: [cart.id],
+              closeCartOnSuccess: true,
+            })
+          }
+          onCheckoutAll={() =>
+            handleCheckoutAll({
+              closeCartOnSuccess: true,
+            })
+          }
+        />
       )}
 
-      {orderDetailOpen && (
-        <div className="order-detail" role="dialog" aria-modal="true">
-          <button
-            className="order-detail__backdrop"
-            onClick={closeOrderDetail}
-            type="button"
-          />
-          <div className="order-detail__panel">
-            <header className="order-detail__header">
-              <button className="order-detail__back" type="button" onClick={closeOrderDetail}>
-                返回
-              </button>
-              <h2>订单详情</h2>
-              <button
-                className="order-detail__close"
-                type="button"
-                onClick={closeOrderDetail}
-              >
-                ✕
-              </button>
-            </header>
-            <div className="order-detail__content">
-              {orderDetailLoading && <div className="order-detail__loading">加载中...</div>}
-              {orderDetailError && !orderDetailLoading && (
-                <div className="order-detail__error">{orderDetailError}</div>
-              )}
-              {!orderDetailLoading && !orderDetailError && !orderDetail && (
-                <div className="order-detail__empty">暂无订单详情</div>
-              )}
-              {!orderDetailLoading && !orderDetailError && orderDetail && (
-                <>
-                  <section className="order-detail__status">
-                    <div className="order-detail__status-icon">{orderDetailSymbol}</div>
-                    <div className="order-detail__status-text">{orderDetailStatusText}</div>
-                  </section>
-
-                  <section className="order-detail__address">
-                    <h3>收货地址</h3>
-                    <p>{orderDetailNameLine || '--'}</p>
-                    <p>{orderDetailAddressLine || '--'}</p>
-                  </section>
-
-                  <section className="order-detail__items">
-                    <h3>商品清单 ({orderDetailItems.length})</h3>
-                    <div className="order-detail__list">
-                      {orderDetailItems.map((item) => {
-                        const imageUrl = item.item_pics?.[0] || item.image;
-                        const quantity = item.num ?? item.quantity ?? 0;
-                        return (
-                          <div className="order-detail__item" key={item.id || item.item_id}>
-                            {imageUrl ? (
-                              <img src={imageUrl} alt="" />
-                            ) : (
-                              <div className="order-detail__item-empty" />
-                            )}
-                            <div className="order-detail__item-info">
-                              <h4>{item.item_name}</h4>
-                              <div className="order-detail__chips">
-                                {item.package_desc && (
-                                  <span className="order-detail__chip">
-                                    {item.package_desc}
-                                  </span>
-                                )}
-                                {item.expiry_desc && (
-                                  <span className="order-detail__chip">
-                                    {item.expiry_desc}
-                                  </span>
-                                )}
-                              </div>
-                              {item.item_spec && (
-                                <p className="order-detail__spec">{item.item_spec}</p>
-                              )}
-                              <div className="order-detail__price">
-                                <span className="price">{formatPrice(item.price)}</span>
-                                <span className="order-detail__qty">x {quantity}</span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-
-                  {orderDetailGifts.length ? (
-                    <section className="order-detail__gifts">
-                      <h3>赠品</h3>
-                      <div className="order-detail__gift-list">
-                        {orderDetailGifts.map((gift, index) => (
-                          <div className="order-detail__gift" key={`${gift.rule_name}-${index}`}>
-                            <p>{gift.rule_name}</p>
-                            <span>
-                              应赠 x {gift.theoretical_quantity} · 实赠 x{' '}
-                              {gift.actual_quantity}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-
-                  <section className="order-detail__pay">
-                    <h3>支付信息</h3>
-                    <div className="order-detail__row">
-                      <span>原价</span>
-                      <span>{formatPrice(orderDetailMarketPrice)}</span>
-                    </div>
-                    <div className="order-detail__row">
-                      <span>总价</span>
-                      <span>{formatPrice(orderDetailActualPrice)}</span>
-                    </div>
-                    <div className="order-detail__row">
-                      <span>运费</span>
-                      <span>{formatPrice(orderDetail?.shipping_fee)}</span>
-                    </div>
-                    <div className="order-detail__row order-detail__row--total">
-                      <span>合计</span>
-                      <span>{formatPrice(orderDetailTotalPrice)}</span>
-                    </div>
-                    <div className="order-detail__row">
-                      <span>支付方式</span>
-                      <span>微信支付</span>
-                    </div>
-                  </section>
-
-                  <section className="order-detail__info">
-                    <h3>订单信息</h3>
-                    <div className="order-detail__info-row">
-                      <span>订单编号</span>
-                      <div className="order-detail__info-meta">
-                        <span>{orderDetail.order_id}</span>
-                        <button
-                          type="button"
-                          className="order-detail__copy"
-                          onClick={() => copyOrderId(orderDetail.order_id)}
-                        >
-                          复制
-                        </button>
-                      </div>
-                    </div>
-                    <div className="order-detail__info-row">
-                      <span>下单时间</span>
-                      <span>{formatDateTime(orderDetail.create_time)}</span>
-                    </div>
-                  </section>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+      {pendingCartItem && (
+        <CartPickerModal
+          pendingItem={pendingCartItem}
+          carts={carts}
+          activeCartId={activeCartId}
+          onClose={() => setPendingCartItem(null)}
+          onPick={handlePendingCartPick}
+        />
       )}
 
-      {detailOpen && (
-        <div className="detail" role="dialog" aria-modal="true">
-          <button className="detail__backdrop" onClick={closeDetail} type="button" />
-          <div className="detail__panel">
-            <header className="detail__header">
-              <button className="detail__back" type="button" onClick={closeDetail}>
-                返回
-              </button>
-              <h2>{detail.item_name || '商品详情'}</h2>
-              <button className="detail__close" type="button" onClick={closeDetail}>
-                ✕
-              </button>
-            </header>
-            <div className="detail__content">
-              <div className="detail__media">
-                {detailLoading ? (
-                  <div className="detail__media--loading" />
-                ) : activeImages?.[0] ? (
-                  <img src={activeImages[0]} alt={detail.item_name} />
-                ) : (
-                  <div className="detail__media--empty">暂无图片</div>
-                )}
-                {isOutOfStock && <span className="detail__soldout">售罄</span>}
-              </div>
-              <div className="detail__info">
-                {detailBrand && <div className="detail__brand">{detailBrand}</div>}
-                <h3>{detail.item_name || detailItem?.item_name || '商品详情'}</h3>
-                <div className="detail__price">
-                  <span className="price">{formatPrice(activePrice)}</span>
-                  <span className="price--old">
-                    {formatPrice(activeMarketPrice)}
-                  </span>
-                </div>
-                <div className="detail__meta">库存：{displayStock}</div>
-                <div className="detail__spec">
-                  <span>规格</span>
-                  <div className="spec__list">
-                    {detailSpecList.length ? (
-                      detailSpecList.map((spec, index) => {
-                        const stockNumber = Number(spec.stock);
-                        const isSoldOut = Number.isFinite(stockNumber) && stockNumber <= 0;
-                        return (
-                          <button
-                            type="button"
-                            key={`${spec.label}-${index}`}
-                            className={`spec__pill ${
-                              spec.id === selectedSpecId ? 'spec__pill--active' : ''
-                            } ${isSoldOut ? 'spec__pill--disabled' : ''}`}
-                            onClick={() => {
-                              if (isSoldOut) return;
-                              setSelectedSpecId(spec.id);
-                            }}
-                          >
-                            <span className={`spec__name ${isSoldOut ? 'spec__name--soldout' : ''}`}>
-                              {spec.label}
-                            </span>
-                            <span className="spec__stock">
-                              库存 {Number.isFinite(stockNumber) ? spec.stock : '--'}
-                            </span>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div className="spec__pill spec__pill--disabled">
-                        <span className="spec__name">暂无规格</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="detail__qty">
-                  <span>购买数量</span>
-                  <div className="qty__control">
-                    <button
-                      type="button"
-                      onClick={() => setQuantity((qty) => Math.max(1, qty - 1))}
-                    >
-                      -
-                    </button>
-                    <span>{quantity}</span>
-                    <button
-                      type="button"
-                      onClick={() => setQuantity((qty) => qty + 1)}
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-                {detailError && <div className="detail__error">{detailError}</div>}
-              </div>
-            </div>
-            <footer className="detail__actions">
-              <button
-                className="action action--cart"
-                type="button"
-                disabled={!canSelectSpec}
-                onClick={() => addToCart(actionItem, quantity)}
-              >
-                加入购物车
-              </button>
-              <button
-                className="action buy"
-                type="button"
-                disabled={isOutOfStock || !canSelectSpec}
-                onClick={() =>
-                  handleCheckout([
-                    {
-                      item_id: actionItem.item_id,
-                      quantity,
-                    },
-                  ])
-                }
-              >
-                立即购买
-              </button>
-            </footer>
-          </div>
-        </div>
-      )}
+      <OrderDetailModal
+        orderDetailOpen={orderDetailOpen}
+        orderDetailLoading={orderDetailLoading}
+        orderDetailError={orderDetailError}
+        orderDetail={orderDetail}
+        orderDetailSymbol={orderDetailSymbol}
+        orderDetailStatusText={orderDetailStatusText}
+        orderDetailNameLine={orderDetailNameLine}
+        orderDetailAddressLine={orderDetailAddressLine}
+        orderDetailItems={orderDetailItems}
+        orderDetailGifts={orderDetailGifts}
+        orderDetailMarketPrice={orderDetailMarketPrice}
+        orderDetailActualPrice={orderDetailActualPrice}
+        orderDetailTotalPrice={orderDetailTotalPrice}
+        formatDateTime={formatDateTime}
+        onCopyOrderId={copyOrderId}
+        onClose={closeOrderDetail}
+      />
+
+      <ProductDetailModal
+        detailOpen={detailOpen}
+        detail={detail}
+        detailItem={detailItem}
+        detailLoading={detailLoading}
+        detailError={detailError}
+        activeImages={activeImages}
+        isOutOfStock={isOutOfStock}
+        detailBrand={detailBrand}
+        activePrice={activePrice}
+        activeMarketPrice={activeMarketPrice}
+        displayStock={displayStock}
+        detailSpecList={detailSpecList}
+        selectedSpecId={selectedSpecId}
+        setSelectedSpecId={setSelectedSpecId}
+        quantity={quantity}
+        setQuantity={setQuantity}
+        canSelectSpec={canSelectSpec}
+        actionItem={actionItem}
+        onClose={closeDetail}
+        onAddToCart={addToCart}
+        onBuyNow={(item, qty) => handleCheckout([buildCartItem(item, qty)])}
+      />
 
       {checkoutOpen && (
-        <div className="checkout" role="dialog" aria-modal="true">
-          <button
-            className="checkout__backdrop"
-            onClick={() => setCheckoutOpen(false)}
-            type="button"
-          />
-          <div className="checkout__panel">
-            <header className="checkout__header">
-              <button
-                className="checkout__back"
-                type="button"
-                onClick={() => setCheckoutOpen(false)}
-              >
-                返回
-              </button>
-              <h2>订单结算</h2>
-              <button
-                className="checkout__close"
-                type="button"
-                onClick={() => setCheckoutOpen(false)}
-              >
-                ✕
-              </button>
-            </header>
-            {checkoutError && <div className="checkout__error">{checkoutError}</div>}
-            {checkoutInvalidItems.length ? (
-              <section className="checkout__invalid">
-                <h3>不可购买商品</h3>
-                <div className="checkout__invalid-list">
-                  {checkoutInvalidItems.map((item) => {
-                    const name =
-                      checkoutItemNameById.get(item.item_id) ||
-                      `商品ID ${item.item_id}`;
-                    return (
-                      <div className="checkout__invalid-item" key={item.item_id}>
-                        <div>
-                          <p className="checkout__invalid-name">{name}</p>
-                          <p className="checkout__invalid-msg">
-                            {item.message || '当前商品不可购买'}
-                          </p>
-                        </div>
-                        <div className="checkout__invalid-meta">
-                          <span>请求 {item.requested_quantity ?? '-'}</span>
-                          <span>可用 {item.available_quantity ?? '-'}</span>
-                          <span>调整 {item.adjusted_quantity ?? '-'}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            ) : null}
-            {checkoutData ? (
-              <div className="checkout__content">
-                <section className="checkout__address">
-                  <h3>收货地址</h3>
-                  {checkoutData.address ? (
-                    <>
-                      <p>
-                        {checkoutData.address.name} {checkoutData.address.mobile}
-                      </p>
-                      <p>
-                        {checkoutData.address.province}
-                        {checkoutData.address.city}
-                        {checkoutData.address.district}
-                        {checkoutData.address.address}
-                      </p>
-                    </>
-                  ) : (
-                    <p>暂无地址信息</p>
-                  )}
-                </section>
-
-                <section className="checkout__items">
-                  <h3>商品清单</h3>
-                  <div className="checkout__list">
-                    {checkoutData.items?.map((item) => (
-                      <div className="checkout__item" key={item.item_id}>
-                        <img src={item.image} alt={item.item_name} />
-                        <div className="checkout__info">
-                          <h4>{item.item_name}</h4>
-                          <p>{item.spec}</p>
-                          <div className="checkout__price">
-                            <span>{formatPrice(item.price)}</span>
-                            <span className="checkout__qty">x {item.quantity}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                {checkoutData.gift_items?.length ? (
-                  <section className="checkout__gifts">
-                    <h3>赠品</h3>
-                    <div className="checkout__gift-list">
-                      {checkoutData.gift_items.map((gift, index) => (
-                        <div className="checkout__gift" key={`${gift.rule_name}-${index}`}>
-                          <p>{gift.rule_name}</p>
-                          <span>
-                            应赠 x {gift.theoretical_quantity} · 实赠 x{' '}
-                            {gift.actual_quantity}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                ) : null}
-
-                <section className="checkout__pay">
-                  <h3>支付信息</h3>
-                  <div className="checkout__row">
-                    <span>原价</span>
-                    <span>{formatPrice(checkoutData.market_price)}</span>
-                  </div>
-                  <div className="checkout__row">
-                    <span>总价</span>
-                    <span>{formatPrice(checkoutData.actual_price)}</span>
-                  </div>
-                  <div className="checkout__row">
-                    <span>运费</span>
-                    <span>{formatPrice(checkoutData.shipping_fee)}</span>
-                  </div>
-                  <div className="checkout__row checkout__row--total">
-                    <span>合计</span>
-                    <span>{formatPrice(checkoutData.total_price)}</span>
-                  </div>
-                  <div className="checkout__row">
-                    <span>支付方式</span>
-                    <span>微信支付</span>
-                  </div>
-                </section>
-              </div>
-            ) : (
-              !checkoutError && <div className="checkout__empty">暂无订单数据</div>
-            )}
-            <footer className="checkout__footer">
-              <div>
-                共 {checkoutData?.total_items_quantity ?? cartCount} 件 合计{' '}
-                {formatPrice(checkoutData?.total_price ?? cartTotal)}
-              </div>
-              <button
-                className="checkout__paybtn"
-                type="button"
-                onClick={() => setCheckoutOpen(false)}
-              >
-                去小程序支付
-              </button>
-            </footer>
-          </div>
-        </div>
+        <CheckoutModal
+          checkoutData={checkoutData}
+          checkoutError={checkoutError}
+          checkoutInvalidItems={checkoutInvalidItems}
+          checkoutItemNameById={checkoutItemNameById}
+          checkoutSnapshotCount={checkoutSnapshotCount}
+          checkoutSnapshotTotal={checkoutSnapshotTotal}
+          onClose={() => setCheckoutOpen(false)}
+        />
       )}
     </div>
   );
