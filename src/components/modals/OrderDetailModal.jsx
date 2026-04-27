@@ -23,7 +23,7 @@ export default function OrderDetailModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <button className="absolute inset-0 bg-stone-950/40" onClick={onClose} type="button" />
-      <div className="relative z-10 flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[30px] border border-stone-200 bg-white shadow-2xl">
+      <div className="relative z-10 flex h-[780px] w-[min(1100px,92vw)] max-w-4xl flex-col overflow-hidden rounded-[30px] border border-stone-200 bg-white shadow-2xl">
         <header className="flex items-center justify-between border-b border-stone-200 px-6 py-4">
           <button
             className="rounded-full border border-stone-200 px-4 py-2 text-sm text-stone-600"

@@ -1353,7 +1353,7 @@ export default function App() {
                 <div className="flex w-full max-w-xl items-center gap-3 rounded-full border border-stone-200 bg-stone-50 px-4 py-3">
                   <IconSearch className="h-5 w-5 text-stone-400" />
                   <input
-                    className="flex-1 bg-transparent text-sm outline-none placeholder:text-stone-400"
+                    className="flex-1 bg-transparent text-sm outline-none placeholder:text-stone-400 box-border"
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder="搜索商品"
@@ -1460,7 +1460,7 @@ export default function App() {
         </div>
       </div>
 
-      <main className="mx-auto max-w-[1440px] px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-[1440px] px-4 py-8 sm:px-6 lg:px-8 overflow-auto">
         <Routes>
           <Route
             path="/"

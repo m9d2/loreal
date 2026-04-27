@@ -36,6 +36,12 @@ export const IconCart = ({ className = iconClass }) => (
   </svg>
 );
 
+export const IconSoldOut = ({ className = iconClass }) => (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
+        <path d="M7 7V6a5 5 0 0 1 10 0v1h3v13a2 2 0 0 1-2 2H6.8L3 18.2V7h4Zm2 0h6V6a3 3 0 0 0-6 0v1Zm-4 2v8.4L7.6 20H18V9H5Zm-1.3-5.3 16.6 16.6-1.4 1.4L2.3 5.1l1.4-1.4Z" />
+    </svg>
+);
+
 export const IconTrash = ({ className = iconClass }) => (
   <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
     <path d="M10 3h4a2 2 0 0 1 2 2v1h4v2h-1l-1 11a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 8H4V6h4V5a2 2 0 0 1 2-2Zm4 3V5h-4v1h4Zm-6.99 2 .99 11h8l1-11H7.01ZM10 10h2v6h-2v-6Zm4 0h-2v6h2v-6Z" />

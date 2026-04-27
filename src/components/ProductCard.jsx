@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { IconCart } from './Icons.jsx';
+import {IconCart, IconSoldOut} from './Icons.jsx';
 import { formatPrice } from '../utils/format.js';
 
 export default function ProductCard({ item, onSelect, onAdd, viewMode = 'grid' }) {
@@ -95,7 +95,7 @@ export default function ProductCard({ item, onSelect, onAdd, viewMode = 'grid' }
             }}
           >
             {isSoldOut ? (
-              <span className="px-1">售罄</span>
+              <IconSoldOut className="h-4 w-4" />
             ) : (
               <IconCart className="h-4 w-4" />
             )}

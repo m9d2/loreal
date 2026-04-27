@@ -6,7 +6,7 @@ export default function CartPickerModal({
   onPick,
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-999 flex items-center justify-center">
       <button className="absolute inset-0 bg-stone-950/40" type="button" onClick={onClose} />
       <div className="relative z-10 grid w-full max-w-md gap-4 rounded-[28px] border border-stone-200 bg-white p-6 shadow-2xl">
         <div className="flex items-center justify-between gap-4">
