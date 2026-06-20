@@ -20,6 +20,7 @@ import {
   getStoredAuth,
   saveAuth,
 } from './api.js';
+import { exportOrdersToExcel } from './utils/exportOrders.js';
 import {
   IconBag,
   IconCart,
@@ -222,6 +223,8 @@ export default function App() {
   const orderListScrollRef = useRef(null);
   const orderListScrollTopRef = useRef(0);
   const shouldRestoreOrderScroll = useRef(false);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportProgress, setExportProgress] = useState('');
 
   const [categoryGroupId, setCategoryGroupId] = useState(CATEGORY_GROUPS[0].id);
   const [categoryBrand, setCategoryBrand] = useState(
@@ -932,6 +935,37 @@ export default function App() {
     }
   };
 
+  const handleExportOrders = async (mode) => {
+    if (exportLoading) return;
+    if (!hasAuth()) {
+      alert('请先登录');
+      return;
+    }
+    setExportLoading(true);
+    setExportProgress('');
+    try {
+      const statusLabel =
+        orderStatus === 'all'
+          ? '全部'
+          : orderStatusLabel(orderStatus);
+      const result = await exportOrdersToExcel(orderStatus, statusLabel, mode, (current, total, phase) => {
+        if (phase === 'fetching_list') {
+          setExportProgress(`获取订单 ${current}/${total || '...'}`);
+        } else if (phase === 'fetching_details') {
+          setExportProgress(`获取详情 ${current}/${total}`);
+        } else if (phase === 'generating') {
+          setExportProgress('生成Excel...');
+        }
+      });
+      alert(`导出成功！共 ${result.count} 个订单`);
+    } catch (err) {
+      alert(err.message || '导出失败');
+    } finally {
+      setExportLoading(false);
+      setExportProgress('');
+    }
+  };
+
   const openDetail = async (item) => {
     setDetailItem(item);
     setDetailData(null);
@@ -1556,6 +1590,9 @@ export default function App() {
                 orderPageNumbers={orderPageNumbers}
                 onPageChange={loadOrders}
                 orderListRef={orderListScrollRef}
+                onExportOrders={handleExportOrders}
+                exportLoading={exportLoading}
+                exportProgress={exportProgress}
               />
             }
           />
